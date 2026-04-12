@@ -83,7 +83,12 @@ async def main():
         sys.exit(1)
     
     # Initialize bot
-    bot = Bot(token=config.BOT_TOKEN, parse_mode=ParseMode.HTML)
+    from aiogram.client.default import DefaultBotProperties
+
+    bot = Bot(
+    token=config.BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
     
     # Get bot info
     try:
