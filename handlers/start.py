@@ -55,10 +55,12 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
             language='ar',
             referred_by=referred_by
         )
+
         await db.execute(
             "UPDATE users SET miniapp_verified=1 WHERE telegram_id=?",
             (telegram_id,)
         )
+
         await state.set_state(SetupState.LANGUAGE)
         await message.answer(
             messages.select_language(),
@@ -70,6 +72,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         lang     = user.get('language', 'ar')
         points   = user.get('points', 0)
         is_admin = await db.is_admin(telegram_id)
+
         await message.answer(
             messages.main_menu(lang, first_name, points),
             reply_markup=main_menu_keyboard(lang, is_admin),
@@ -102,6 +105,7 @@ async def resume_setup(message: Message, state: FSMContext, user: dict):
                     missing.append(channel)
             except Exception:
                 continue
+
         if missing:
             await state.set_state(SetupState.CHANNELS)
             await message.answer(
@@ -110,7 +114,7 @@ async def resume_setup(message: Message, state: FSMContext, user: dict):
             )
             return
 
-    await complete_setup(message, user)
+    await complete_setup(message, state, user)
 
 
 @router.callback_query(F.data.startswith("lang:"))
@@ -123,6 +127,7 @@ async def process_language(callback: CallbackQuery, state: FSMContext):
         "UPDATE users SET miniapp_verified=1 WHERE telegram_id=?",
         (telegram_id,)
     )
+
     await callback.answer()
 
     channels = await db.get_channels(active_only=True)
@@ -138,6 +143,7 @@ async def process_language(callback: CallbackQuery, state: FSMContext):
                     missing.append(channel)
             except Exception:
                 continue
+
         if missing:
             await state.set_state(SetupState.CHANNELS)
             await callback.message.edit_text(
@@ -147,7 +153,7 @@ async def process_language(callback: CallbackQuery, state: FSMContext):
             return
 
     user = await db.get_user(telegram_id)
-    await complete_setup(callback.message, user)
+    await complete_setup(callback.message, state, user)
 
 
 @router.callback_query(F.data == "check_channels")
@@ -186,13 +192,37 @@ async def check_channels(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.answer(messages.channel_join_success(lang))
-    await complete_setup(callback.message, user)
+    await complete_setup(callback.message, state, user)
 
 
-async def complete_setup(message, user: dict):
+async def complete_setup(message, state: FSMContext, user: dict):
     telegram_id = user['telegram_id']
     lang        = user.get('language', 'ar')
 
+    # ── CHECK CHANNELS BEFORE COMPLETING SETUP ──
+    channels = await db.get_channels(active_only=True)
+    if channels:
+        missing = []
+        for channel in channels:
+            try:
+                member = await message.bot.get_chat_member(
+                    chat_id=channel['channel_id'],
+                    user_id=telegram_id
+                )
+                if member.status in ('left', 'kicked', 'banned', 'restricted'):
+                    missing.append(channel)
+            except Exception:
+                continue
+
+        if missing:
+            await state.set_state(SetupState.CHANNELS)
+            await message.answer(
+                messages.channel_join_prompt(lang, missing),
+                reply_markup=channels_keyboard(lang, missing)
+            )
+            return
+
+    # ── COMPLETE SETUP ──
     await db.update_user_setup_complete(telegram_id)
 
     welcome_key = f'welcome_message_{lang}'
@@ -213,6 +243,7 @@ async def complete_setup(message, user: dict):
         messages.welcome_message(lang, welcome_msg),
         parse_mode='HTML'
     )
+
     await message.answer(
         messages.main_menu(lang, first_name, points),
         reply_markup=main_menu_keyboard(lang, is_admin),
