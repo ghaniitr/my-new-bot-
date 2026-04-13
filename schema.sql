@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS products (
     name_en VARCHAR(255) NOT NULL,
     description_ar TEXT,
     description_en TEXT,
-    delivery_type ENUM('unlimited_file', 'oncesell_file', 'oncesell_text') NOT NULL,
+    delivery_type TEXT NOT NULL DEFAULT 'oncesell_text',
     points_price INT NOT NULL,
     stock INT DEFAULT 0,
     is_visible TINYINT DEFAULT 1,
