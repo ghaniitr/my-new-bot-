@@ -98,16 +98,7 @@ async def resume_setup(message: Message, state: FSMContext, user: dict):
     lang = user.get('language', 'ar')
     telegram_id = user['telegram_id']
     
-    # Check mini app verification (DISABLED)
-    if False and not user.get('miniapp_verified'):
-        await state.set_state(SetupState.MINIAPP)
-        await message.answer(
-            messages.miniapp_prompt(lang),
-            reply_markup=miniapp_keyboard(lang, telegram_id)
-    )
-    return
-    
-    
+    # MINI APP VERIFICATION DISABLED
     # Check channels
     channels = await db.get_channels(active_only=True)
     if channels:
@@ -147,13 +138,35 @@ async def process_language(callback: CallbackQuery, state: FSMContext):
     # Update user language
     await db.update_user_language(telegram_id, lang)
     
-    # Move to mini app verification
-    await state.set_state(SetupState.MINIAPP)
-    await callback.message.edit_text(
-        messages.miniapp_prompt(lang),
-        reply_markup=miniapp_keyboard(lang, telegram_id)
-    )
+    # Skip mini app — go straight to channel check
+    user = await db.get_user(telegram_id)
+    
+    channels = await db.get_channels(active_only=True)
+    if channels:
+        missing = []
+        for channel in channels:
+            try:
+                member = await callback.bot.get_chat_member(
+                    chat_id=channel['channel_id'],
+                    user_id=telegram_id
+                )
+                if member.status in ('left', 'kicked', 'banned', 'restricted'):
+                    missing.append(channel)
+            except Exception:
+                continue
+
+        if missing:
+            await state.set_state(SetupState.CHANNELS)
+            await callback.message.edit_text(
+                messages.channel_join_prompt(lang, missing),
+                reply_markup=channels_keyboard(lang, missing)
+            )
+            await callback.answer()
+            return
+
+    # All checks passed
     await callback.answer()
+    await complete_setup(callback.message, user)
 
 
 # ==================== MINI APP VERIFICATION ====================
