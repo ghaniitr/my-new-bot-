@@ -136,7 +136,7 @@ async def ad_submit_screenshot(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(AdState.SUBMITSCREENSHOT)
+@router.message(AdState.SUBMIT_SCREENSHOT)
 async def process_screenshot(message: Message, state: FSMContext, bot: Bot):
     """Process submitted screenshot."""
     telegram_id = message.from_user.id
