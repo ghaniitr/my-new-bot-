@@ -52,43 +52,50 @@ class AdminState(StatesGroup):
     ADD_PRODUCT_STOCK = State()
     EDIT_PRODUCT = State()
     ADD_STOCK = State()
-    
+
     # Categories
     ADD_CATEGORY_NAME_EN = State()
     ADD_CATEGORY_NAME_AR = State()
-    
+
     # Channels
     ADD_CHANNEL_ID = State()
     ADD_CHANNEL_NAME = State()
     ADD_CHANNEL_URL = State()
-    
+
     # Coupons
     ADD_COUPON_CODE = State()
     ADD_COUPON_POINTS = State()
     ADD_COUPON_MAX_USES = State()
     ADD_COUPON_EXPIRY = State()
-    
+
     # Users
     SEARCH_USER = State()
     USER_ADD_POINTS = State()
     USER_REMOVE_POINTS = State()
-    
+
     # Admins
     ADD_ADMIN = State()
-    
+
     # Broadcast
     BROADCAST_MESSAGE = State()
     BROADCAST_CONFIRM = State()
-    
+
     # Support
     REPLY_TICKET = State()
-    
+
     # Stars Packages
     ADD_STARS_PKG_STARS = State()
     ADD_STARS_PKG_POINTS = State()
-    
+
     # Settings
     SETTING_VALUE = State()
+
+    # Ads
+    ADD_AD_TITLE = State()
+    ADD_AD_URL = State()
+    ADD_AD_POINTS = State()
+    ADD_AD_TYPE = State()
+    ADD_AD_COOLDOWN = State()
 
 
 # ==================== ADMIN CHECK ====================
@@ -2302,6 +2309,128 @@ async def admin_ad_claim_reject_save(message: Message, state: FSMContext, bot: B
     await message.answer(
         "✅ Claim rejected",
         reply_markup=back_button('en', "admin:ad_claims_pending")
+    )
+
+
+# ==================== ADD AD ====================
+
+@router.callback_query(F.data == "admin:add_ad")
+async def admin_add_ad_start(callback: CallbackQuery, state: FSMContext):
+    """Start add ad flow."""
+    if not await is_admin_check(callback.from_user.id):
+        await callback.answer("⛔ Access denied", show_alert=True)
+        return
+
+    await state.set_state(AdminState.ADD_AD_TITLE)
+    await callback.message.edit_text(
+        "📺 <b>Add Ad</b>\n\nEnter ad title:",
+        reply_markup=cancel_keyboard('en')
+    )
+    await callback.answer()
+
+
+@router.message(AdminState.ADD_AD_TITLE)
+async def admin_add_ad_title(message: Message, state: FSMContext):
+    """Save ad title and ask for URL."""
+    await state.update_data(ad_title=message.text.strip())
+    await state.set_state(AdminState.ADD_AD_URL)
+    await message.answer(
+        "📺 <b>Add Ad</b>\n\nEnter ad URL:",
+        reply_markup=cancel_keyboard('en')
+    )
+
+
+@router.message(AdminState.ADD_AD_URL)
+async def admin_add_ad_url(message: Message, state: FSMContext):
+    """Save URL and ask for points reward."""
+    await state.update_data(ad_url=message.text.strip())
+    await state.set_state(AdminState.ADD_AD_POINTS)
+    await message.answer(
+        "📺 <b>Add Ad</b>\n\nEnter points reward:",
+        reply_markup=cancel_keyboard('en')
+    )
+
+
+@router.message(AdminState.ADD_AD_POINTS)
+async def admin_add_ad_points(message: Message, state: FSMContext):
+    """Save points reward and ask for type."""
+    try:
+        points = int(message.text.strip())
+        if points <= 0:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ Please enter a valid positive number")
+        return
+
+    await state.update_data(ad_points=points)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    await message.answer(
+        "📺 <b>Add Ad</b>\n\nSelect type:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="1️⃣ Once Per User", callback_data="admin_ad_type:1")],
+            [InlineKeyboardButton(text="🔄 Cooldown", callback_data="admin_ad_type:0")],
+            [InlineKeyboardButton(text="❌ Cancel", callback_data="admin:ads")]
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith("admin_ad_type:"))
+async def admin_add_ad_type(callback: CallbackQuery, state: FSMContext):
+    """Save type and either finish or ask for cooldown."""
+    is_once = int(callback.data.split(":")[1])
+    await state.update_data(ad_is_once=is_once)
+
+    if is_once:
+        # Finish creating ad with defaults
+        data = await state.get_data()
+        ad_id = await db.create_ad_task(
+            title=data['ad_title'],
+            url=data['ad_url'],
+            points_reward=data['ad_points'],
+            is_once_per_user=1,
+            cooldown_hours=24
+        )
+        await state.clear()
+        await callback.message.edit_text(
+            f"✅ Ad created!\n📢 {data['ad_title']} — {data['ad_points']} pts — Once Per User\n"
+            f"🆔 Ad ID: <code>{ad_id}</code>",
+            reply_markup=back_button('en', "admin:ads"),
+            parse_mode='HTML'
+        )
+    else:
+        await state.set_state(AdminState.ADD_AD_COOLDOWN)
+        await callback.message.edit_text(
+            "📺 <b>Add Ad</b>\n\nEnter cooldown hours (e.g. 24):",
+            reply_markup=cancel_keyboard('en')
+        )
+    await callback.answer()
+
+
+@router.message(AdminState.ADD_AD_COOLDOWN)
+async def admin_add_ad_cooldown(message: Message, state: FSMContext):
+    """Save cooldown and create ad."""
+    try:
+        hours = int(message.text.strip())
+        if hours <= 0:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ Please enter a valid positive number")
+        return
+
+    data = await state.get_data()
+    ad_id = await db.create_ad_task(
+        title=data['ad_title'],
+        url=data['ad_url'],
+        points_reward=data['ad_points'],
+        is_once_per_user=0,
+        cooldown_hours=hours
+    )
+    await state.clear()
+    await message.answer(
+        f"✅ Ad created!\n📢 {data['ad_title']} — {data['ad_points']} pts — Cooldown: {hours}h\n"
+        f"🆔 Ad ID: <code>{ad_id}</code>",
+        reply_markup=back_button('en', "admin:ads"),
+        parse_mode='HTML'
     )
 
 
