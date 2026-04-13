@@ -96,7 +96,7 @@ def load_config() -> Config:
         
         MINIAPP_URL=miniapp_url,
         MINIAPP_SECRET=miniapp_secret,
-        MINIAPP_PORT=int(os.getenv('MINIAPP_PORT', '8080')),
+        MINIAPP_PORT=int(os.getenv('PORT', os.getenv('MINIAPP_PORT', '8080'))),
         
         REFERRAL_DELAY_SECONDS=int(os.getenv('REFERRAL_DELAY_SECONDS', '60')),
         MIN_ACCOUNT_AGE_DAYS=int(os.getenv('MIN_ACCOUNT_AGE_DAYS', '0')),
