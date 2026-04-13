@@ -124,7 +124,7 @@ async def ad_submit_screenshot(callback: CallbackQuery, state: FSMContext):
 
     ad_id = int(callback.data.split(":")[1])
     await state.update_data(ad_id=ad_id)
-    await state.set_state(AdState.SUBMITSCREENSHOT)
+    await state.set_state(AdState.SUBMIT_SCREENSHOT)  
 
     lang = user.get('language', 'ar')
     await callback.message.edit_text(
