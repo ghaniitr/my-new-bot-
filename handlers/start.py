@@ -98,14 +98,15 @@ async def resume_setup(message: Message, state: FSMContext, user: dict):
     lang = user.get('language', 'ar')
     telegram_id = user['telegram_id']
     
-    # Check mini app verification
-    if not user.get('miniapp_verified'):
+    # Check mini app verification (DISABLED)
+    if False and not user.get('miniapp_verified'):
         await state.set_state(SetupState.MINIAPP)
         await message.answer(
             messages.miniapp_prompt(lang),
             reply_markup=miniapp_keyboard(lang, telegram_id)
-        )
-        return
+    )
+    return
+    
     
     # Check channels
     channels = await db.get_channels(active_only=True)
