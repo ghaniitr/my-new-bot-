@@ -394,7 +394,9 @@ async def start_miniapp_server():
     """Start the mini app server."""
     app = web.Application()
     app.router.add_get('/', handle_index)
+    app.router.add_get('/miniapp', handle_index)
     app.router.add_post('/api/verify', handle_verify)
+    app.router.add_post('/miniapp/api/verify', handle_verify)
     app.router.add_get('/health', handle_health)
     
     runner = web.AppRunner(app)
