@@ -127,7 +127,7 @@ class Database:
                     name_en TEXT NOT NULL,
                     description_ar TEXT,
                     description_en TEXT,
-                    delivery_type TEXT NOT NULL CHECK(delivery_type IN ('unlimited_file', 'oncesell_file', 'oncesell_text')),
+                    delivery_type TEXT NOT NULL DEFAULT 'oncesell_text',
                     points_price INTEGER NOT NULL,
                     stock INTEGER DEFAULT 0,
                     is_visible INTEGER DEFAULT 1,
@@ -1356,3 +1356,250 @@ class Database:
 
 # Global database instance
 db = Database()
+
+
+# ==================== NEW METHODS FOR V2 ====================
+
+# Points <-> Stars conversion
+async def points_to_stars(points: int) -> int:
+    """Convert points to stars cost."""
+    rate = int(await db.get_setting('stars_per_point', '4'))
+    return points * rate
+
+async def stars_to_points(stars: int) -> int:
+    """Convert stars to points cost."""
+    rate = int(await db.get_setting('stars_per_point', '4'))
+    return stars // rate
+
+# Star Orders methods
+async def create_star_order(user_id: int, stars_amount: int, points_cost: int) -> Optional[str]:
+    """Create a star withdrawal order. Returns order_id."""
+    order_id = f"SO-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
+    try:
+        await db.execute(
+            """INSERT INTO star_orders (user_id, stars_amount, points_cost, order_id)
+               VALUES (?, ?, ?, ?)""",
+            (user_id, stars_amount, points_cost, order_id)
+        )
+        return order_id
+    except Exception:
+        return None
+
+async def get_star_order(order_id: str) -> Optional[Dict[str, Any]]:
+    """Get star order by order_id."""
+    return await db.fetchone(
+        "SELECT * FROM star_orders WHERE order_id = ?",
+        (order_id,)
+    )
+
+async def get_user_star_orders(user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+    """Get user's star orders."""
+    return await db.fetchall(
+        f"SELECT * FROM star_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT {limit}",
+        (user_id,)
+    )
+
+async def get_pending_star_orders() -> List[Dict[str, Any]]:
+    """Get all pending star orders."""
+    return await db.fetchall(
+        "SELECT * FROM star_orders WHERE status = 'pending' ORDER BY created_at ASC"
+    )
+
+async def update_star_order_status(order_id: str, status: str, **kwargs):
+    """Update star order status."""
+    allowed = ['delivered_at', 'cancelled_at', 'confirmed_at', 'admin_id']
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    set_parts = ["status = ?"]
+    values = [status]
+    for k, v in updates.items():
+        set_parts.append(f"{k} = ?")
+        values.append(v)
+    values.append(order_id)
+    set_clause = ", ".join(set_parts)
+    await db.execute(
+        f"UPDATE star_orders SET {set_clause} WHERE order_id = ?",
+        tuple(values)
+    )
+
+async def get_pending_star_orders_count() -> int:
+    """Get count of pending star orders."""
+    result = await db.fetchone(
+        "SELECT COUNT(*) as count FROM star_orders WHERE status = 'pending'"
+    )
+    return result['count'] if result else 0
+
+async def get_expired_star_orders() -> List[Dict[str, Any]]:
+    """Get star orders older than 24 hours that are still pending."""
+    return await db.fetchall(
+        """SELECT * FROM star_orders WHERE status = 'pending'
+           AND datetime(created_at) < datetime('now', '-24 hours')"""
+    )
+
+# User restriction methods
+async def set_user_restricted(telegram_id: int, restricted: bool = True):
+    """Restrict or unrestrict a user."""
+    await db.execute(
+        "UPDATE users SET is_restricted = ? WHERE telegram_id = ?",
+        (1 if restricted else 0, telegram_id)
+    )
+
+async def is_user_restricted(telegram_id: int) -> bool:
+    """Check if user is restricted."""
+    result = await db.fetchone(
+        "SELECT is_restricted FROM users WHERE telegram_id = ?",
+        (telegram_id,)
+    )
+    return bool(result and result.get('is_restricted', 0))
+
+async def set_admin_notes(telegram_id: int, notes: str):
+    """Set admin notes for a user."""
+    await db.execute(
+        "UPDATE users SET admin_notes = ? WHERE telegram_id = ?",
+        (notes, telegram_id)
+    )
+
+# Channel methods (updated for V2)
+async def update_channel(channel_id: str, **kwargs):
+    """Update channel fields."""
+    allowed = ['channel_id', 'channel_name', 'channel_url', 'is_active']
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if updates:
+        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+        values = list(updates.values()) + [channel_id]
+        await db.execute(
+            f"UPDATE channels SET {set_clause} WHERE channel_id = ?",
+            tuple(values)
+        )
+
+async def delete_channel(channel_id: str):
+    """Delete a channel."""
+    await db.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id,))
+
+# Product stock - permanent delete method
+async def delete_stock_item(stock_id: int):
+    """Permanently delete a stock item."""
+    await db.execute("DELETE FROM product_stock WHERE id = ?", (stock_id,))
+
+# Ad tasks methods
+async def create_ad_task(title: str, url: str, points_reward: int,
+                        is_once_per_user: int = 1, cooldown_hours: int = 24) -> int:
+    """Create a new ad task. Returns ad id."""
+    return await db.execute(
+        """INSERT INTO ad_tasks (title, url, points_reward, is_once_per_user, cooldown_hours)
+           VALUES (?, ?, ?, ?, ?)""",
+        (title, url, points_reward, is_once_per_user, cooldown_hours)
+    )
+
+async def get_ad_tasks(active_only: bool = True) -> List[Dict[str, Any]]:
+    """Get all ad tasks."""
+    if active_only:
+        return await db.fetchall(
+            "SELECT * FROM ad_tasks WHERE is_active = 1 ORDER BY id"
+        )
+    return await db.fetchall("SELECT * FROM ad_tasks ORDER BY id")
+
+async def get_ad_task(ad_id: int) -> Optional[Dict[str, Any]]:
+    """Get ad task by ID."""
+    return await db.fetchone(
+        "SELECT * FROM ad_tasks WHERE id = ?",
+        (ad_id,)
+    )
+
+async def update_ad_task(ad_id: int, **kwargs):
+    """Update ad task fields."""
+    allowed = ['title', 'url', 'points_reward', 'is_once_per_user', 'cooldown_hours', 'is_active']
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if updates:
+        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+        values = list(updates.values()) + [ad_id]
+        await db.execute(
+            f"UPDATE ad_tasks SET {set_clause} WHERE id = ?",
+            tuple(values)
+        )
+
+async def delete_ad_task(ad_id: int):
+    """Delete an ad task."""
+    await db.execute("DELETE FROM ad_tasks WHERE id = ?", (ad_id,))
+
+async def increment_ad_claims(ad_id: int):
+    """Increment total claims for an ad."""
+    await db.execute(
+        "UPDATE ad_tasks SET total_claims = total_claims + 1 WHERE id = ?",
+        (ad_id,)
+    )
+
+# Ad claims methods
+async def create_ad_claim(user_id: int, ad_id: int, screenshot_file_id: str) -> int:
+    """Create a new ad claim. Returns claim id."""
+    return await db.execute(
+        """INSERT INTO ad_claims (user_id, ad_id, screenshot_file_id)
+           VALUES (?, ?, ?)""",
+        (user_id, ad_id, screenshot_file_id)
+    )
+
+async def get_ad_claim(claim_id: int) -> Optional[Dict[str, Any]]:
+    """Get ad claim by ID."""
+    return await db.fetchone(
+        "SELECT * FROM ad_claims WHERE id = ?",
+        (claim_id,)
+    )
+
+async def get_user_ad_claims(user_id: int, ad_id: int) -> List[Dict[str, Any]]:
+    """Get user's claims for a specific ad."""
+    return await db.fetchall(
+        "SELECT * FROM ad_claims WHERE user_id = ? AND ad_id = ? ORDER BY submitted_at DESC",
+        (user_id, ad_id)
+    )
+
+async def get_pending_ad_claims() -> List[Dict[str, Any]]:
+    """Get all pending ad claims."""
+    return await db.fetchall(
+        "SELECT * FROM ad_claims WHERE status = 'pending' ORDER BY submitted_at ASC"
+    )
+
+async def update_ad_claim(claim_id: int, status: str, **kwargs):
+    """Update ad claim status."""
+    allowed = ['reject_reason', 'reviewed_at', 'reviewed_by']
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    set_parts = ["status = ?"]
+    values = [status]
+    for k, v in updates.items():
+        set_parts.append(f"{k} = ?")
+        values.append(v)
+    values.append(claim_id)
+    set_clause = ", ".join(set_parts)
+    await db.execute(
+        f"UPDATE ad_claims SET {set_clause} WHERE id = ?",
+        tuple(values)
+    )
+
+async def has_approved_ad_claim(user_id: int, ad_id: int) -> bool:
+    """Check if user has an approved claim for an ad."""
+    result = await db.fetchone(
+        "SELECT 1 FROM ad_claims WHERE user_id = ? AND ad_id = ? AND status = 'approved'",
+        (user_id, ad_id)
+    )
+    return result is not None
+
+async def has_pending_ad_claim(user_id: int, ad_id: int) -> bool:
+    """Check if user has a pending claim for an ad."""
+    result = await db.fetchone(
+        "SELECT 1 FROM ad_claims WHERE user_id = ? AND ad_id = ? AND status = 'pending'",
+        (user_id, ad_id)
+    )
+    return result is not None
+
+async def get_last_approved_claim_time(user_id: int, ad_id: int) -> Optional[datetime]:
+    """Get the timestamp of user's last approved claim for an ad."""
+    result = await db.fetchone(
+        """SELECT submitted_at FROM ad_claims
+           WHERE user_id = ? AND ad_id = ? AND status = 'approved'
+           ORDER BY submitted_at DESC LIMIT 1""",
+        (user_id, ad_id)
+    )
+    if result and result.get('submitted_at'):
+        ts = result['submitted_at']
+        if isinstance(ts, str):
+            return datetime.fromisoformat(ts.replace('Z', '+00:00').replace('+00:00', ''))
+        return ts
+    return None
